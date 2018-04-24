@@ -1,0 +1,73 @@
+// WAL is a logical representation of the stable storage.
+// WAL is either in read mode or append mode but not both.
+// A newly created WAL is in append mode, and ready for appending records.
+// A just opened WAL is in read mode, and ready for reading records.
+// The WAL will be ready for appending after reading out all the previous records.
+type WAL struct {
+        dir      string           // the living directory of the underlay files
+        metadata []byte           // metadata recorded at the head of each WAL----元数据记录
+        state    raftpb.HardState // hardstate recorded at the head of WAL
+
+        start   walpb.Snapshot // snapshot to start reading
+        decoder *decoder       // decoder to decode records---解码
+
+        mu      sync.Mutex
+        f       *os.File // underlay file opened for appending, sync
+        seq     uint64   // sequence of the wal file currently used for writes
+        enti    uint64   // index of the last entry saved to the wal ---最后一次保存到wal中的entry的索引
+        encoder *encoder // encoder to encode records----编码
+
+        locks []fileutil.Lock // the file locks the WAL is holding (the name is increasing)
+}
+
+wal是由无数个 walpb.Record 结构的数据组成。wal是一个持久存储的逻辑展示。wal时刻只能存在一种状态： 追加和读。
+读取所有记录之后才能追加数据。在读的过程中，发生写就会panic。
+
+0000000000000000-0000000000000000.wal -前面是sequence number -后面是index
+wal 名字会在内存中组成names的字符串数组，按照index number 分组，并且升序排序。
+针对同一组index，seq肯定是连续的。
+一个wal文件最大为64M，超过就会增加seq和index，创建一个新的wal文件。
+Save 调用cut ，cut会增加seq和index，创建.tmp文件然后 重命名为wal文件。
+
+
+walpb.Record{Type: 类型, Data: 数据})
+
+snap文件
+专门由coreos/etcd/snap/snapshotter.go 负责save 和load。
+
+由 snapshot.Metadata.Term, snapshot.Metadata.Index + ".snap" 组成 snap文件名称。
+
+内容由 snap := snappb.Snapshot{Crc: crc, Data: b} 组成
+snappb.Snapshot 结构是 snappb定义的，其中Data 为raftpb.Snapshot
+raftpb.Snapshot 结构体如下：
+type Snapshot struct {
+        Data             []byte           `protobuf:"bytes,1,opt,name=data" json:"data,omitempty"`
+        Metadata         SnapshotMetadata `protobuf:"bytes,2,opt,name=metadata" json:"metadata"`
+        XXX_unrecognized []byte           `json:"-"`
+}
+type SnapshotMetadata struct {
+        ConfState        ConfState `protobuf:"bytes,1,opt,name=conf_state" json:"conf_state"`
+        Index            uint64    `protobuf:"varint,2,opt,name=index" json:"index"`
+        Term             uint64    `protobuf:"varint,3,opt,name=term" json:"term"`
+        XXX_unrecognized []byte    `json:"-"`
+}
+
+snapshotter.go中 Load() 加载最新的一个snap文件，读取内部数据，返回的是结构体raftpb.Snapshot
+
+
+api.Snapshot中s
+
+api/snapshot.pb.go中snapshot结构 in-memory store中的数据
+// StoreSnapshot is used to store snapshots of the store.
+type StoreSnapshot struct {
+        Nodes    []*Node    `protobuf:"bytes,1,rep,name=nodes" json:"nodes,omitempty"`
+        Services []*Service `protobuf:"bytes,2,rep,name=services" json:"services,omitempty"`
+        Networks []*Network `protobuf:"bytes,3,rep,name=networks" json:"networks,omitempty"`
+        Tasks    []*Task    `protobuf:"bytes,4,rep,name=tasks" json:"tasks,omitempty"`
+        Clusters []*Cluster `protobuf:"bytes,5,rep,name=clusters" json:"clusters,omitempty"`
+}
+type Snapshot struct {
+        Version    Snapshot_Version `protobuf:"varint,1,opt,name=version,proto3,enum=docker.swarmkit.v1.Snapshot_Version" json:"version,omitempty"`
+        Membership ClusterSnapshot  `protobuf:"bytes,2,opt,name=membership" json:"membership"`
+        Store      StoreSnapshot    `protobuf:"bytes,3,opt,name=store" json:"store"`
+}
