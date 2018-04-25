@@ -1,0 +1,39 @@
+<interface type='vhostuser'>
+      <mac address='fa:16:3e:e7:dc:bf'/>
+      <source type='unix' path='/var/run/openvswitch/vhu3f9c01de-ec' mode='client'/>
+      <model type='virtio'/>
+      <driver name='vhost' queues='4'/>
+      <alias name='net0'/>
+      <address type='pci' domain='0x0000' bus='0x00' slot='0x03' function='0x0'/>
+    </interface>
+	
+	
+	<interface type='vhostuser'>
+<mac address='fa:01:3e:00:11:01'/>
+<source type='unix' path='/opt/network/ovdk/bin/vhost.sock' reconnect='10' mode='client'/>
+<dvs bridge='br-int'/>
+<target dev='ovk5ec17164-01'/>      #名称自定义
+<virtualport type='openvswitch'/>------这些是老版本dvs特有的
+<model type='virtio'/>
+</interface>
+
+
+老版本dvs qemu 参数多了 reconnect=10，ifname=ovka2dfdb33-69,vhostforce
+-chardev socket,id=charnet0,path=/opt/network/ovdk/bin/vhost.sock,reconnect=10 -netdev type=vhost-user,id=hostnet0,chardev=charnet0,ifname=ovka2dfdb33-69,vhostforce
+
+vhost_virtqueue_start检测 ifname不为空 则执行 vhost_set_net_name ，跟开源不冲突 
+qemu 层 qmp_netdev_add 
+qmp_netdev_del
+libvirt1.2.21 不支持在添加 网卡设备的时候 执行qemuMonitorAttachCharDev 添加socket字符设备，qemu要单独创建socket字符设备。
+
+
+    def->dvsbrname = NULL;
+        if(bridge != NULL){
+            def->dvsbrname = bridge;
+            bridge = NULL;
+            def->dvsvirtPortInterfaceID = virtPortInterfaceID;
+            virtPortInterfaceID = NULL;
+        }
+		
+针对 ovs+dpdk 动态加网卡，在执行qemuDomainAttachNetDevice 函数之前 ovs上的vhostuser 虚拟端口已经被创建了。
+而ovdk需要 libvirt执行ovs命令add-port添加。
